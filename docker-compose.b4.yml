@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: spam
+      POSTGRES_PASSWORD: spam
+      POSTGRES_DB: spamdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - spamdb_data:/var/lib/postgresql/data
+
+  serving:
+    build: .
+    working_dir: /app
+    command: uvicorn src.serving.app:app --host 0.0.0.0 --port 8000
+    environment:
+      - B3_BACKEND=onnx
+      - B3_MODEL_DIR=models/b3/onnx_distilbert_ft_opset18
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+
+  orchestrator:
+    build: .
+    working_dir: /app
+    command: uvicorn src.orchestrator.app:app --host 0.0.0.0 --port 8010
+    environment:
+      - DATABASE_URL=postgresql+psycopg://spam:spam@postgres:5432/spamdb
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_TEMPERATURE=0.0
+      - REDACT_PII=true
+      - MAX_CHARS=6000
+    ports:
+      - "8010:8010"
+    depends_on:
+      - postgres
+
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - orchestrator
+      - serving
+
+volumes:
+  spamdb_data:
+  n8n_data:

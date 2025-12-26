@@ -1,139 +1,267 @@
-# 📧 Spam Email Classifier (TF‑IDF + Linear SVM + LogReg + RF + NB)
+# 📧 Spam Email Classifier → NLP / Transformers / LLM Lab (v1 + B1–B4)
 
-End‑to‑end **spam vs ham** email/text classifier using **scikit‑learn** and **TF‑IDF**.  
-The code is written as a small, production‑like Python package (no Jupyter), ready for GitHub and interview walkthroughs.
+End‑to‑end **spam vs ham** email/text classification project that starts with a brutally strong classical baseline (**TF‑IDF + Linear SVM**) and evolves into a modern NLP lab:
+**spaCy preprocessing**, **Sentence Transformers embeddings**, **DistilBERT fine‑tuning**, **PEFT/LoRA**, **ONNX export + FastAPI serving**, and **LLM orchestration with LangGraph + n8n**.
 
-This project is not a toy:
+This repo is intentionally written like a small production package (no notebooks) and is meant to be walked through in an interview:
 
-- real‑world Kaggle dataset with ~83k labeled emails
-- multiple models: **Logistic Regression, Random Forest, Linear SVM, Naive Bayes**
-- **Precision‑Recall curves** and **PR‑AUC** for class‑imbalance‑aware evaluation
-- **threshold tuning** on the spam score (maximize F1 on spam)
-- **CLI predictor**, **FastAPI HTTP API**
-- **active learning** helper for manual labeling
-- simple **monitoring/drift report**
-- **MLflow** experiment tracking (local)
-- and a basic **pytest** test suite
+- **What problem?** spam detection as a risk trade‑off.
+- **What did you try?** classical vs embeddings vs fine‑tuned transformers vs PEFT.
+- **Why those choices?** accuracy vs cost vs latency vs deployment.
+- **How did you evaluate?** ROC‑AUC, PR‑AUC, F1, threshold tuning, confusion matrix.
+- **What broke?** missing deps, slow spaCy, ONNX export API mismatch/opset, Apple MPS quirks.
+- **How did you fix it?** caching, multiprocessing, truncation, stable ONNX export path, backend switching.
 
 ---
 
-## 1. Problem & Goal
+## 0) What’s inside (high level)
+
+### ✅ v1 (classic, production‑minded)
+
+- Kaggle spam dataset (~83k)
+- TF‑IDF vectorizer + multiple models:
+  - Logistic Regression, Random Forest, Linear SVM, Naive Bayes
+- Metrics: Accuracy, Precision, Recall, F1, ROC‑AUC, **PR‑AUC**
+- **threshold tuning** to maximize F1 on spam
+- CLI predictor
+- FastAPI HTTP API
+- Active learning helper (uncertainty sampling)
+- Monitoring / drift report (simple)
+- MLflow local tracking (optional)
+- pytest test suite
+
+### ✅ B1 (modernize NLP + compare model families)
+
+- spaCy integration (tokenization/lemmatization/stopwords optional, caching, multiprocess)
+- Sentence Transformers → embeddings → LogReg (fast semantic baseline)
+- DistilBERT fine‑tuning for spam/ham
+- Compare vs TF‑IDF+SVM baseline under same split & metrics
+
+### ✅ B2 (PEFT / LoRA)
+
+- Linear probe variant (cheap adaptation)
+- LoRA variant (parameter‑efficient fine‑tune)
+- Saved model artifacts
+
+### ✅ B3 (Serving + ONNX + latency benchmark)
+
+- Export transformer models to ONNX (Optimum)
+- Export sklearn baseline as joblib
+- FastAPI serving that can switch between **onnx** and **sklearn**
+- Smoke tests + latency benchmark
+
+### ✅ B4 (LLM orchestration + automation)
+
+- Orchestrator service: spam detection → if spam → redact/truncate → LLM categorization/summary
+- LangGraph flow + n8n workflow integration blueprint
+
+---
+
+## 1) Problem & Goal
 
 - **Problem:** Binary classification – decide if a given email/message is **spam** (1) or **ham** (0).
 - **Input:** Raw email/SMS text.
-- **Output:** A label (`SPAM` / `HAM`), plus a spam score / probability when the model supports it.
-- **Business view:**
-  - False negatives (spam → ham) = security/phishing risk.
-  - False positives (ham → spam) = user frustration, missed important messages.
+- **Output:** A label (`spam` / `ham`) + spam score/probability + decision threshold.
 
-What this repo demonstrates:
+### Business view
 
-1. Clean **text → TF‑IDF → ML model** pipeline.
-2. Comparison of several models on high‑dimensional sparse features.
-3. Proper **classification metrics**: Accuracy, Precision, Recall, F1, ROC‑AUC, PR‑AUC, Confusion Matrix.
-4. **Threshold tuning** focused on the spam class.
-5. Serving the model via **CLI** and **HTTP API**.
-6. First steps to **active learning** and **monitoring**.
+- **False negatives** (spam → ham) = phishing & security risk.
+- **False positives** (ham → spam) = user frustration, missed important messages.
+
+So I explicitly track:
+
+- **PR‑AUC** (more meaningful under class imbalance)
+- **threshold tuning** (maximize F1 on the spam class or enforce a recall target)
 
 ---
 
-## 2. Dataset (Real Emails, Not Synthetic)
+## 2) Dataset (Real Emails, Not Synthetic)
 
-The project uses a **real spam email dataset** from Kaggle:
-
-> **Spam Email Classification Dataset** – P. Singhvi  
-> Kaggle: `email-spam-classification-dataset`  
-
-This dataset is referenced in recent research as a real email corpus for spam detection,  
-and contains tens of thousands of labeled emails. It is suitable for serious ML experiments, not just a toy sample.
-
-In this project:
-
-- the CSV is stored as:
-
-  ```text
-  data/spam_emails.csv
-  ```
-
-- typical schema (after normalization):
-
-  - `text` – raw email or message text
-  - `label` – `"ham"` or `"spam"`
-
-The original CSV is **not committed** to the repo (Kaggle terms).  
-Download it manually and place it in `data/spam_emails.csv`.
-
-Optionally, you can add:
-
-- `data/unlabeled_emails.csv` – raw emails without labels, used by the **active learning** and **monitoring** scripts.
-
----
-
-## 3. Project Structure
+Uses a real spam email dataset (~83k labeled samples). Put it here:
 
 ```text
-1.2-spam-classifier/
+data/spam_emails.csv
+```
+
+Typical normalized schema (after normalization step in code):
+
+- `text` – raw email/message body
+- `label` – `"ham"` or `"spam"`
+
+The raw CSV is not committed (Kaggle terms). Download manually and place in `data/spam_emails.csv`.
+
+Optional:
+
+- `data/unlabeled_emails.csv` — unlabeled pool for active learning / monitoring.
+
+---
+
+## 3) Project Structure (FULL: v1 + B1–B4)
+
+> You complained I “forgot the old version” in the map. Here it is — **everything**: old v1 scripts + new B‑phases.
+
+```text
+spam-classifier/
 ├─ data/
-│   ├─ spam_emails.csv                      # labeled Kaggle dataset (not committed)
-│   └─ unlabeled_emails.csv                 # optional unlabeled data for active learning / monitoring
+│  ├─ spam_emails.csv                          # Kaggle dataset (not committed)
+│  └─ unlabeled_emails.csv                     # optional (active learning / monitoring)
+│
 ├─ models/
-│   ├─ spam_classifier.joblib               # best trained model (e.g. calibrated Linear SVM)
-│   ├─ tfidf_vectorizer.joblib              # fitted TfidfVectorizer
-│   └─ model_metadata.json                  # model name, paths, labels, tuned threshold, n_samples
+│  # ===== v1 artifacts (classic pipeline) =====
+│  ├─ spam_classifier.joblib                   # best classical model
+│  ├─ tfidf_vectorizer.joblib                  # fitted vectorizer
+│  └─ model_metadata.json                      # best model name, threshold, paths, etc.
+│
+│  # ===== B-phase artifacts =====
+│  ├─ b1/
+│  │  └─ distilbert_spam/                      # fine-tuned DistilBERT (HF format)
+│  ├─ b2/
+│  │  ├─ linear_probe_distilbert-base-uncased/  # saved model (full weights)
+│  │  └─ lora_distilbert-base-uncased/          # PEFT adapter (and meta)
+│  └─ b3/
+│     ├─ sklearn_tfidf_svm/
+│     │  ├─ model.joblib
+│     │  └─ meta.json
+│     ├─ onnx_distilbert_ft_opset18/
+│     │  ├─ model.onnx
+│     │  ├─ tokenizer.json / vocab files
+│     │  └─ meta.json
+│     └─ onnx_distilbert_lora_merged_opset18/
+│        ├─ model.onnx
+│        ├─ tokenizer.json / vocab files
+│        └─ meta.json
+│
 ├─ output/
-│   ├─ plots/
-│   │   ├─ label_distribution.png           # ham vs spam counts
-│   │   ├─ message_length_hist.png          # histogram of email length
-│   │   └─ precision_recall_curves.png      # PR curves for all models
-│   ├─ metrics/
-│   │   └─ classification_metrics.json      # all metrics (default + tuned) for all models
-│   ├─ active_learning/
-│   │   └─ uncertain_emails_top_10.csv      # most uncertain unlabeled emails to review
-│   └─ monitoring/
-│       └─ daily_stats.csv                  # simple drift/volume report
+│  # ===== v1 outputs =====
+│  ├─ plots/
+│  │  ├─ label_distribution.png
+│  │  ├─ message_length_hist.png
+│  │  └─ precision_recall_curves.png
+│  ├─ metrics/
+│  │  └─ classification_metrics.json
+│  ├─ active_learning/
+│  │  └─ uncertain_emails_top_10.csv
+│  └─ monitoring/
+│     └─ daily_stats.csv
+│
+│  # ===== B-phase outputs =====
+│  ├─ b1/
+│  │  ├─ metrics_b1.json
+│  │  └─ compare_b1.csv
+│  ├─ b2/
+│  │  ├─ metrics_b2.json
+│  │  └─ compare_b2.csv
+│  └─ b3/
+│     └─ latency.csv
+│
 ├─ src/
-│   ├─ __init__.py
-│   ├─ text_preprocessing.py                # cleaning: lowercasing, URL/EMAIL/NUM masking, etc.
-│   ├─ train_spam_classifier.py             # training + evaluation + PR curves + MLflow logging
-│   ├─ predict_spam.py                      # CLI / library prediction (loads model + vectorizer + metadata)
-│   ├─ api.py                               # FastAPI app exposing /health and /predict
-│   ├─ active_learning.py                   # select most uncertain unlabeled emails for human labeling
-│   └─ monitoring_report.py                 # simple monitoring over unlabeled batch
+│  # ===== v1 classic pipeline =====
+│  ├─ __init__.py
+│  ├─ text_preprocessing.py                    # URL/EMAIL/NUM masking, cleanup
+│  ├─ train_spam_classifier.py                 # training + evaluation + PR curves + MLflow
+│  ├─ predict_spam.py                          # CLI / library prediction
+│  ├─ api.py                                   # FastAPI app (v1) exposing /health + /predict
+│  ├─ active_learning.py                       # uncertainty sampling for unlabeled pool
+│  └─ monitoring_report.py                     # drift/volume stats over unlabeled batch
+│
+│  # ===== B1/B2 NLP lab =====
+│  ├─ nlp_lab/
+│  │  ├─ run_b1.py                             # orchestrates B1 experiments
+│  │  ├─ run_b2.py                             # orchestrates B2 experiments
+│  │  ├─ spacy_pipeline.py                     # spaCy preprocessor + caching
+│  │  └─ models/
+│  │     ├─ tfidf_svm.py                        # baseline wrapper (B1)
+│  │     ├─ st_logreg.py                        # sentence-transformer embeddings + LogReg
+│  │     ├─ bert_finetune.py                    # DistilBERT fine-tune
+│  │     └─ peft_lora.py                        # PEFT/LoRA training (B2)
+│
+│  # ===== B3 serving (multi-backend) =====
+│  └─ serving/
+│     ├─ app.py                                # FastAPI app (B3) switchable backend
+│     ├─ backends.py                           # ONNX + sklearn runtime
+│     ├─ export_sklearn.py                      # export joblib bundle for serving
+│     ├─ export_to_onnx.py                      # export to ONNX via optimum-cli
+│     ├─ smoke_onnx.py                          # validates ONNX runtime
+│     └─ benchmark_latency.py                   # throughput/latency benchmark
+│
+│  # ===== B4 orchestrator (LLM + LangGraph + n8n) =====
+│  └─ orchestrator/
+│     ├─ app.py                                # FastAPI triage service
+│     ├─ llm_graph.py                           # LangGraph definition
+│     ├─ redact.py                              # PII redact + truncation
+│     ├─ schemas.py                             # Pydantic request/response models
+│     └─ db.py                                  # optional persistence layer
+│
 ├─ tests/
-│   ├─ test_api.py                          # FastAPI TestClient tests (health + spam/ham predictions)
-│   ├─ test_predict.py                      # smoke tests for predict_single()
-│   ├─ test_predict_cli.py                  # tests CLI output via subprocess
-│   └─ test_training.py                     # checks that training produces all expected artifacts
+│  ├─ test_api.py
+│  ├─ test_predict.py
+│  ├─ test_predict_cli.py
+│  └─ test_training.py
+│
 ├─ requirements.txt
 └─ README.md
 ```
 
 ---
 
-## 4. Installation
+## 4) Installation
 
-### 4.1. Create virtualenv
+### 4.1 Create virtualenv
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate     # Windows: .venv\Scripts\activate
+python -m pip install -U pip
 ```
 
-### 4.2. Install requirements
+### 4.2 Install v1 requirements (classic)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If you want to use the **MLflow UI**:
+If your `requirements.txt` only had these older packages:
+
+```txt
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+joblib
+pytest
+mlflow
+pika
+httpx
+```
+
+### 4.3 Install B1/B2/B3 extras (modern NLP / Transformers / ONNX)
 
 ```bash
-pip install mlflow
+# spaCy + language detect
+pip install spacy langdetect tqdm
+python -m spacy download en_core_web_sm
+
+# transformers stack
+pip install "transformers>=4.40" "datasets>=2.18" "accelerate>=0.28" "torch"
+pip install sentence-transformers
+
+# PEFT / LoRA
+pip install peft
+
+# ONNX export/runtime via Optimum
+pip install "optimum[onnxruntime]" onnxruntime
+```
+
+If you want cleaner ONNX tooling:
+
+```bash
+pip install onnx onnxruntime-tools
 ```
 
 ---
 
-## 5. Training Pipeline (End‑to‑End)
+## 5) v1 Training Pipeline (End‑to‑End, TF‑IDF + Models)
 
 Run:
 
@@ -147,208 +275,78 @@ You should see logs similar to:
 [INFO] Loaded data from data/spam_emails.csv
 [INFO] Raw shape: 83448 rows, 2 columns
 [INFO] Detected schema: text/label
-[CLEAN] Dropped 0 rows with missing text/label
-[INFO] Final cleaned shape (before split): (83448, 3)
 ...
 [SPLIT] Train size: 66758, Test size: 16690
-[SPLIT] Train spam ratio: 0.526, Test spam ratio: 0.526
 ...
 [TRAIN] Fitted LogisticRegression
 [TRAIN] Fitted RandomForestClassifier
 [TRAIN] Fitted LinearSVM (margin-based)
-[TRAIN] Fitted LinearSVM_calibrated with Platt scaling (sigmoid)
+[TRAIN] Fitted LinearSVM_calibrated (Platt scaling)
 [TRAIN] Fitted NaiveBayes (MultinomialNB)
 ...
 [SELECT] Best model by tuned F1: LinearSVM_calibrated
-...
-[DONE] Training + evaluation (with PR curves & tuned thresholds) completed.
+[DONE] Saved models + plots + metrics JSON
 ```
 
-### 5.1. Loading & schema normalization
+### 5.1 Loading & schema normalization
 
-`train_spam_classifier.py`:
+`src/train_spam_classifier.py` handles common Kaggle/SMS schemas:
 
-- loads `data/spam_emails.csv`
-- detects common schemas:
-  - `["text", "label"]`
-  - `["text", "target"]`
-  - `["v1", "v2"]` (SMS spam style)
-- normalizes to:
+- `["text", "label"]`
+- `["text", "target"]`
+- `["v1", "v2"]` (SMS spam datasets)
 
-  ```text
-  text      -> raw message text
-  label     -> "ham" / "spam"
-  text_clean -> cleaned text used for modeling
-  ```
+Normalizes into:
 
-- drops rows with missing `text`/`label`
-- lowercases and normalizes:
-  - URLs → `URL`
-  - email addresses → `EMAIL`
-  - digits → `NUM`
-  - strips extra whitespace
-- drops rows where `text_clean` becomes empty
+- `text` (raw)
+- `label` (`ham`/`spam`)
+- `text_clean` (cleaned)
 
-### 5.2. Quick EDA plots
+### 5.2 Preprocessing (v1)
 
-Before training, the script generates:
+`src/text_preprocessing.py` typically includes:
 
-- `output/plots/label_distribution.png` – spam vs ham counts
-- `output/plots/message_length_hist.png` – histogram of character lengths
+- lowercase
+- normalize URLs → `URL`
+- normalize emails → `EMAIL`
+- digits → `NUM`
+- strip extra whitespace
+- remove empty messages
 
-These are meant to be embedded in the README / GitHub:
+### 5.3 TF‑IDF vectorization
 
-```markdown
-![Label distribution](output/plots/label_distribution.png)
-![Message length histogram](output/message_length_hist.png)
-```
+Key idea: fit on train only, transform train/test with same vectorizer.
+Typical config:
 
-### 5.3. Train/Test split
+- ngrams (1,2)
+- `max_features`
+- `min_df`, `max_df`
+- stopwords
 
-- stratified split with `test_size=0.2`
-- preserves spam ratio between train and test
-- logs sizes and ratios
+### 5.4 Metrics & threshold tuning
 
-### 5.4. Vectorization (TF‑IDF)
+Compute:
 
-Uses `TfidfVectorizer` with:
+- Accuracy, Precision, Recall, F1
+- ROC‑AUC, **PR‑AUC**
+- confusion matrix
+- PR curve
+- threshold scan to maximize F1 on spam (or set recall constraint)
 
-- `ngram_range=(1, 2)` (unigrams + bigrams)
-- `max_features=20000`
-- `min_df=5`, `max_df=0.95`
-- `stop_words="english"`
+Artifacts:
 
-Crucial design point:
+- `output/metrics/classification_metrics.json`
+- `output/plots/precision_recall_curves.png`
 
-- **fit** on training data only,
-- **transform** both train and test with the same fitted vectorizer.
-
-The fitted vectorizer is later saved to:
-
-```text
-models/tfidf_vectorizer.joblib
-```
-
-### 5.5. Models
-
-The following models are trained on the TF‑IDF features:
-
-1. **LogisticRegression**
-   - `class_weight="balanced"`
-   - `solver="liblinear"`, `max_iter=1000`
-2. **RandomForestClassifier**
-   - `n_estimators=300`
-   - `class_weight="balanced"`
-   - `n_jobs=-1`
-3. **LinearSVM** (`LinearSVC`)
-   - `class_weight="balanced"`
-   - used with `decision_function` scores
-4. **LinearSVM_calibrated**
-   - `LinearSVC` wrapped in `CalibratedClassifierCV` (Platt scaling / sigmoid)
-   - provides calibrated probabilities for spam
-5. **NaiveBayes** (`MultinomialNB`)
-   - classic probabilistic text classifier
-
-Each model is evaluated on the **same** test split to make metrics comparable.
-
-### 5.6. Metrics, PR curves & threshold tuning
-
-For each model, the script computes:
-
-- **default metrics** at the standard threshold:
-  - 0.5 for probability‑based models
-  - 0.0 for margin‑based models (decision function)
-- **classification metrics** (spam as positive class):
-  - Accuracy
-  - Precision, Recall, F1
-  - ROC‑AUC
-  - PR‑AUC (area under Precision‑Recall curve)
-  - Confusion matrix
-  - Full `classification_report`
-- **Precision‑Recall curve** on the test set
-- **tuned F1**:
-  - scan over thresholds from the PR curve
-  - pick the threshold that maximizes **F1** on spam
-
-The curves for all models are combined into:
-
-```text
-output/plots/precision_recall_curves.png
-```
-
-Embeddable in README:
-
-```markdown
-![Precision-Recall curves](output/plots/precision_recall_curves.png)
-```
-
-Example log lines:
-
-```text
-[EVAL] LogisticRegression      | Default: Acc=0.9853, ... F1=0.9861 | Tuned F1=0.9869 @ thr=0.4311 | ROC-AUC=0.9982 | PR-AUC=0.9981
-[EVAL] RandomForest           | Default: Acc=0.9874, ... F1=0.9880 | Tuned F1=0.9882 @ thr=0.4634 | ROC-AUC=0.9984 | PR-AUC=0.9981
-[EVAL] LinearSVM              | Default: Acc=0.9898, ... F1=0.9903 | Tuned F1=0.9907 @ thr=0.0125 | ROC-AUC=0.9986 | PR-AUC=0.9983
-[EVAL] LinearSVM_calibrated   | Default: Acc=0.9902, ... F1=0.9907 | Tuned F1=0.9908 @ thr=0.4894 | ROC-AUC=0.9987 | PR-AUC=0.9984
-[EVAL] NaiveBayes             | Default: Acc=0.9739, ... F1=0.9750 | Tuned F1=0.9809 @ thr=0.3221 | ROC-AUC=0.9968 | PR-AUC=0.9965
-```
-
-### 5.7. Model selection & artifacts
-
-- The **selection criterion** is the **best tuned F1** on the spam class.
-- In the shown run, the best model is:
-
-  - `LinearSVM_calibrated` (LinearSVC with Platt scaling)
-
-The training script saves:
+### 5.5 Saved artifacts (v1)
 
 - `models/tfidf_vectorizer.joblib`
-- `models/spam_classifier.joblib` (best model)
-- `models/model_metadata.json`:
-
-  ```jsonc
-  {
-    "best_model_name": "LinearSVM_calibrated",
-    "vectorizer_path": "models/tfidf_vectorizer.joblib",
-    "model_path": "models/spam_classifier.joblib",
-    "labels": {"ham": 0, "spam": 1},
-    "n_samples": 83448,
-    "best_threshold": 0.4894
-  }
-  ```
-
-- `output/metrics/classification_metrics.json`:
-
-  ```jsonc
-  {
-    "best_model_name": "LinearSVM_calibrated",
-    "metrics": {
-      "LogisticRegression": {
-        "default": { ... },
-        "tuned":   { ... },
-        "roc_auc": 0.9982,
-        "pr_auc":  0.9981
-      },
-      "RandomForest": {
-        "...": "..."
-      },
-      "LinearSVM": {
-        "...": "..."
-      },
-      "LinearSVM_calibrated": {
-        "...": "..."
-      },
-      "NaiveBayes": {
-        "...": "..."
-      }
-    }
-  }
-  ```
+- `models/spam_classifier.joblib`
+- `models/model_metadata.json` (includes best threshold)
 
 ---
 
-## 6. Inference – CLI
-
-Once training is done, you can classify arbitrary text from the command line.
+## 6) v1 Inference – CLI
 
 Example:
 
@@ -356,126 +354,32 @@ Example:
 python -m src.predict_spam --text "Congratulations, you have won a free iPhone. Click here now!"
 ```
 
-Example output:
-
-```text
-[LOAD] Loaded vectorizer from models/tfidf_vectorizer.joblib
-[LOAD] Loaded classifier from models/spam_classifier.joblib
-
-[RESULT]
-Predicted label: SPAM (int=1)
-Estimated spam probability: 0.987
-Threshold used: 0.4894
-
-[DEBUG] Cleaned text preview:
-congratulations you have won a free iphone click here now
-```
-
-For a ham‑like message:
-
-```bash
-python -m src.predict_spam --text "Hi John, here are the slides for tomorrow's meeting."
-```
-
-Output:
-
-```text
-Predicted label: HAM (int=0)
-Estimated spam probability: 0.013
-Threshold used: 0.4894
-```
-
-You can also use it programmatically:
+Programmatic usage:
 
 ```python
 from src.predict_spam import predict_single
 
-result = predict_single("You have been selected for a FREE cash prize!")
-print(result)
-# {
-#   "label_int": 1,
-#   "label_str": "spam",
-#   "spam_probability": 0.992,
-#   "score": 3.42,               # e.g. decision_function score
-#   "threshold_used": 0.4894,
-#   "model_name": "LinearSVM_calibrated",
-#   "cleaned_text": "you have been selected for a free cash prize"
-# }
+res = predict_single("You have been selected for a FREE cash prize!")
+print(res["label_str"], res["spam_probability"], res["threshold_used"])
 ```
 
 ---
 
-## 7. HTTP API (FastAPI)
+## 7) v1 HTTP API (FastAPI)
 
-### 7.1. Start the API
-
-First, train the model:
-
-```bash
-python -m src.train_spam_classifier
-```
-
-Then run:
+Start v1 API:
 
 ```bash
 uvicorn src.api:app --reload
 ```
 
-- API base: <http://127.0.0.1:8000>
-- Swagger UI: <http://127.0.0.1:8000/docs>
-
-### 7.2. Endpoints
-
-#### `GET /health`
-
-Health check:
-
-```json
-{
-  "status": "ok",
-  "model_name": "LinearSVM_calibrated",
-  "has_vectorizer": true
-}
-```
-
-(if loading was successful)
-
-#### `POST /predict`
-
-Request:
-
-```json
-{
-  "text": "Congratulations! You have been selected for a FREE prize. Click here now!"
-}
-```
-
-Response (example):
-
-```json
-{
-  "label_int": 1,
-  "label_str": "SPAM",
-  "spam_probability": 0.987,
-  "threshold_used": 0.4894,
-  "model_name": "LinearSVM_calibrated",
-  "cleaned_text": "congratulations you have been selected for a free prize click here now"
-}
-```
-
-You can call it with `curl`:
-
-```bash
-curl -X POST "http://localhost:8000/predict" \
-     -H "Content-Type: application/json" \
-     -d '{"text": "Hi, here is the agenda for tomorrow\'s standup."}'
-```
+- Swagger: <http://127.0.0.1:8000/docs>
+- `GET /health`
+- `POST /predict`
 
 ---
 
-## 8. Active Learning Helper
-
-The project includes a simple **active learning** helper that picks the most uncertain emails from an unlabeled pool.
+## 8) v1 Active Learning Helper
 
 Run:
 
@@ -483,31 +387,15 @@ Run:
 python -m src.active_learning
 ```
 
-It will:
-
-1. Load the trained model + vectorizer.
-2. Load `data/unlabeled_emails.csv` (you provide this file).
-3. Compute an **uncertainty score** for each message (e.g. probability close to the tuned threshold).
-4. Select the **top‑K most uncertain** examples (default: 10).
-5. Save them to:
-
-   ```text
-   output/active_learning/uncertain_emails_top_10.csv
-   ```
-
-Log example:
+Uses `data/unlabeled_emails.csv`, picks most uncertain messages, writes:
 
 ```text
-[AL] Saved top-10 most uncertain emails to output/active_learning/uncertain_emails_top_10.csv
+output/active_learning/uncertain_emails_top_10.csv
 ```
-
-You can then open that CSV and manually label these borderline cases to improve the dataset in the next training run.
 
 ---
 
-## 9. Monitoring / Drift Report
-
-`monitoring_report.py` gives a tiny example of **offline monitoring** on a batch of (unlabeled) emails.
+## 9) v1 Monitoring / Drift Report
 
 Run:
 
@@ -515,131 +403,302 @@ Run:
 python -m src.monitoring_report
 ```
 
-It will:
-
-1. Load the model/vectorizer.
-2. Load `data/unlabeled_emails.csv`.
-3. Classify each message as spam/ham.
-4. Aggregate **daily statistics**, including things like:
-   - date
-   - number of messages
-   - spam rate
-   - average text length
-   - changes in average length vs the first day (simple drift indicator)
-5. Save to:
-
-   ```text
-   output/monitoring/daily_stats.csv
-   ```
-
-Example log:
+Writes:
 
 ```text
-[MON] Saved daily stats to output/monitoring/daily_stats.csv
-
-[MON] Daily stats preview:
-         date  ...  avg_length_delta_vs_first
-0  2025-11-29  ...                        0.0
+output/monitoring/daily_stats.csv
 ```
-
-This is deliberately simple, but it shows how to:
-
-- plug the model into a daily batch job,
-- start tracking basic **data drift** signals.
 
 ---
 
-## 10. Experiment Tracking with MLflow (Optional)
+## 10) MLflow tracking (Optional, v1)
 
-If `mlflow` is installed, `train_spam_classifier` can log:
-
-- parameters (vectorizer config, model types)
-- metrics (acc/prec/recall/F1, ROC‑AUC, PR‑AUC)
-- artifacts (plots, metrics JSON)
-
-to a local MLflow tracking directory (e.g. `./mlruns`).
-
-To launch the UI:
+If enabled, training logs params/metrics/artifacts to `./mlruns`.
+Launch UI:
 
 ```bash
 mlflow ui --backend-store-uri ./mlruns
 ```
 
-Then open the address shown in the console (typically <http://127.0.0.1:5000>) and compare runs.
+---
 
-If you don’t care about experiment tracking, you can ignore MLflow, the core pipeline still works.
+# ===========================
+
+# B‑PHASES (B1 → B4)
+
+# ===========================
+
+## 11) B1 — Modern NLP Experiments (spaCy + Sentence Transformers + DistilBERT)
+
+B1 is a comparison lab using the same dataset but different model families.
+
+### 11.1 B1 Baseline (TF‑IDF + Calibrated LinearSVC)
+
+```bash
+B1_MODELS=tfidf_svm B1_SPACY_LEMMA=0 python -m src.nlp_lab.run_b1
+```
+
+Your observed run example:
+
+- `f1(tuned)=0.9916`
+
+### 11.2 SentenceTransformer embeddings + Logistic Regression
+
+```bash
+B1_MODELS=tfidf_svm,st_logreg B1_SPACY_LEMMA=0 python -m src.nlp_lab.run_b1
+```
+
+Your observed run example:
+
+- `st_logreg f1(tuned)=0.9550` (baseline still wins on this dataset)
+
+### 11.3 spaCy lemmatization (when you want it, and why it can be slow)
+
+The spaCy path is heavier. You solved “it looks stuck” by:
+
+- enabling multiprocessing
+- batching
+- truncation
+- caching lemma arrays
+
+Run:
+
+```bash
+B1_MODELS=tfidf_svm \
+B1_SPACY_LEMMA=1 \
+B1_SPACY_NPROC=4 \
+B1_SPACY_MAXCHARS=3000 \
+python -m src.nlp_lab.run_b1
+```
+
+You also saw:
+`[W108] rule-based lemmatizer did not find POS annotation ...`
+Meaning: lemmatizer expects POS tags. If lemma doesn’t help your metric, keep it OFF (your baseline didn’t need it).
+
+### 11.4 DistilBERT fine‑tuning
+
+You already run this with sampling to keep it practical:
+
+```bash
+B1_MODELS=bert \
+B1_BERT_TRAIN_MAX=20000 \
+B1_BERT_EVAL_MAX=5000 \
+python -m src.nlp_lab.run_b1
+```
+
+Artifacts:
+
+- `output/b1/metrics_b1.json`
+- `output/b1/compare_b1.csv`
+- `models/b1/distilbert_spam/`
 
 ---
 
-## 11. Testing
+## 12) B2 — PEFT / LoRA (parameter‑efficient adaptation)
 
-Run all tests with:
+### 12.1 Linear probe
+
+```bash
+B2_VARIANT=linear_probe \
+B2_TRAIN_MAX=5000 \
+B2_EVAL_MAX=2000 \
+python -m src.nlp_lab.run_b2
+```
+
+Sample result you produced:
+
+- trainable params ≈ 592k / 66.9M
+- `f1_tuned ≈ 0.9445`
+
+### 12.2 LoRA
+
+```bash
+B2_VARIANT=lora \
+B2_TRAIN_MAX=5000 \
+B2_EVAL_MAX=2000 \
+B2_EPOCHS=2 \
+B2_LR=2e-4 \
+B2_LORA_R=16 \
+B2_LORA_ALPHA=32 \
+B2_LORA_DROPOUT=0.05 \
+python -m src.nlp_lab.run_b2
+```
+
+Sample result you produced:
+
+- trainable params ≈ 1.18M / 68.1M
+- `f1_tuned ≈ 0.9728`
+
+Artifacts:
+
+- `output/b2/metrics_b2.json`
+- `output/b2/compare_b2.csv`
+- `models/b2/...`
+
+---
+
+## 13) B3 — Serving + ONNX + Multi‑backend FastAPI + Benchmark
+
+### 13.1 Export sklearn baseline
+
+```bash
+python -m src.serving.export_sklearn
+```
+
+### 13.2 Export transformer to ONNX
+
+You hit an Optimum API mismatch (`opset` argument) and solved it using `optimum-cli` path inside the exporter.
+
+Export fine‑tuned DistilBERT:
+
+```bash
+python -m src.serving.export_to_onnx \
+  --source models/b1/distilbert_spam \
+  --out models/b3/onnx_distilbert_ft_opset18 \
+  --threshold 0.5 \
+  --opset 18 \
+  --task text-classification \
+  --device cpu
+```
+
+Export LoRA model (merged for export):
+
+```bash
+python -m src.serving.export_to_onnx \
+  --source models/b2/lora_distilbert-base-uncased \
+  --out models/b3/onnx_distilbert_lora_merged_opset18 \
+  --threshold 0.5 \
+  --opset 18 \
+  --task text-classification \
+  --device cpu
+```
+
+### 13.3 Smoke test ONNX
+
+```bash
+python -m src.serving.smoke_onnx --model-dir models/b3/onnx_distilbert_lora_merged_opset18
+```
+
+### 13.4 Serve (B3 API) — choose backend
+
+ONNX backend:
+
+```bash
+B3_BACKEND=onnx B3_MODEL_DIR=models/b3/onnx_distilbert_ft_opset18 \
+uvicorn src.serving.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+sklearn backend:
+
+```bash
+B3_BACKEND=sklearn B3_MODEL_DIR=models/b3/sklearn_tfidf_svm \
+uvicorn src.serving.app:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Test:
+
+```bash
+curl -s http://127.0.0.1:8000/health ; echo
+curl -s -X POST http://127.0.0.1:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"texts":["free money click now!!!","hey can we reschedule the meeting?"]}' ; echo
+```
+
+### 13.5 Benchmark latency
+
+```bash
+python -m src.serving.benchmark_latency
+```
+
+Writes:
+
+```text
+output/b3/latency.csv
+```
+
+---
+
+## 14) B4 — LLM Orchestration + n8n Automation (LangGraph)
+
+For now you said: “skip eval because RAM is huge”. B4 does not require big eval; it’s system integration.
+
+### Goal
+
+Turn “spam probability” into a workflow:
+
+- If spam → decide subtype (phishing/scam/promo/malware)
+- Produce short explanation + recommended action
+- Save to DB / send notification
+
+### Core design
+
+1. **Classifier service** (B3) predicts `spam_prob` and `is_spam`
+2. If spam, call **Triage Orchestrator** (B4):
+   - redact PII (emails/phones/IDs/card-like patterns)
+   - truncate long bodies
+   - call LLM via LangGraph with a structured output schema
+3. Persist results or push to downstream workflow
+
+### Run orchestrator (example)
+
+```bash
+uvicorn src.orchestrator.app:app --host 127.0.0.1 --port 8010 --reload
+```
+
+### Example triage request
+
+```bash
+curl -s -X POST http://127.0.0.1:8010/v1/triage \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source":"manual",
+    "message_id":"demo-1",
+    "from_addr":"promo@example.com",
+    "subject":"WIN a gift card NOW",
+    "received_at":"2025-12-24T00:00:00Z",
+    "text":"Congratulations! You have won. Click this link to claim.",
+    "spam_prob":0.99,
+    "is_spam":true,
+    "spam_model":"onnx_distilbert_ft_opset18"
+  }' ; echo
+```
+
+### n8n workflow blueprint (practical)
+
+Nodes (typical):
+
+1. **IMAP Email Trigger** (or Gmail node)
+2. **HTTP Request** → call `POST http://classifier/predict`
+3. **IF** node: `is_spam == true`
+4. If true: **HTTP Request** → call `POST http://triage/v1/triage`
+5. **Postgres** node (save triage result) OR **Telegram/Email** node (notify)
+
+This is the “system” story that turns a model into automation.
+
+---
+
+## 15) Testing
+
+Run:
 
 ```bash
 python -m pytest
 ```
 
-You should see something like:
+---
 
-```text
-============================ test session starts ============================
-platform darwin -- Python 3.11, pytest-9.x
-collected 7 items
+## 16) How to pitch this in an interview (script you can actually say)
 
-tests/test_api.py ...
-tests/test_predict.py .
-tests/test_predict_cli.py ..
-tests/test_training.py .
-
-================== 7 passed, 1 warning in XX.XXs ==================
-```
-
-High‑level coverage:
-
-- **`test_training.py`**
-  - calls the training function on a small sample
-  - checks that:
-    - vectorizer/model/metadata/metrics files exist
-    - metrics JSON has entries for all models
-    - tuned threshold is present
-
-- **`test_predict.py`**
-  - calls `predict_single()` on spam‑like and ham‑like texts
-  - asserts labels and probabilities/scores are in valid ranges
-
-- **`test_predict_cli.py`**
-  - runs `python -m src.predict_spam` via `subprocess`
-  - checks that CLI prints `Predicted label: SPAM` / `HAM` as expected
-
-- **`test_api.py`**
-  - uses `TestClient` from FastAPI
-  - hits `/health` and `/predict`, verifies 200 responses and sensible outputs
-
-This puts the project clearly in the **“production‑minded”** camp, not just notebook hacking.
+> “I built an end‑to‑end spam classifier on a real Kaggle corpus (~83k emails).  
+> I started with TF‑IDF + linear models because they’re fast and surprisingly strong for spam. I evaluated with PR‑AUC, ROC‑AUC, F1, and tuned thresholds to maximize spam F1.  
+> Then I built an NLP lab comparing sentence‑transformer embeddings + logreg and DistilBERT fine‑tuning, and finally added PEFT/LoRA to show parameter‑efficient adaptation.  
+> For deployment I created a FastAPI service with swappable backends: sklearn for ultra‑fast throughput and ONNX for transformer portability, plus a benchmark script.  
+> Finally I added a LangGraph + n8n orchestration layer that turns spam predictions into automated triage and notifications.”
 
 ---
 
-## 12. How to Pitch This Project in an Interview
+## 17) License
 
-A compact way to explain this repo:
-
-> “I built an end‑to‑end spam email classifier on a real Kaggle dataset (~83k emails).  
-> I normalize and clean the text, use TF‑IDF with unigrams/bigrams, and train four models  
-> (Logistic Regression, Random Forest, Linear SVM, Naive Bayes). I evaluate all of them  
-> with ROC‑AUC and PR‑AUC, then tune the spam threshold using Precision‑Recall curves  
-> to maximize F1 on the spam class.  
-> The best model (calibrated Linear SVM) is saved along with the TF‑IDF vectorizer and  
-> metadata in joblib/JSON, and I expose it via a CLI script and a FastAPI endpoint.  
-> On top of that, I added a small active‑learning loop to surface the most uncertain emails  
-> for manual labeling, a monitoring script that aggregates daily spam/ham stats and simple  
-> drift signals, and a pytest suite to keep the training and prediction pipelines stable.”
-
----
-
-## 14. License
-
-```text
 MIT License
 
 Copyright (c) 2025 Mohammad Eslamnia
-```

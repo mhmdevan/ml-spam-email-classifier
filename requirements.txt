@@ -1,3 +1,4 @@
+# ---------- Core (classic baseline) ----------
 pandas
 numpy
 scikit-learn
@@ -8,3 +9,48 @@ pytest
 mlflow
 pika
 httpx
+
+# ---------- Utilities ----------
+tqdm>=4.66.0
+python-dotenv>=1.0.1
+
+# ---------- B1: spaCy pipeline ----------
+spacy==3.7.6
+spacy-lookups-data>=1.0.5
+langdetect==1.0.9
+
+# ---------- B1: Sentence Transformers ----------
+sentence-transformers==2.7.0
+
+# ---------- B1/B2: Transformers training ----------
+transformers==4.46.3
+datasets==2.21.0
+accelerate==0.34.2
+torch
+
+# Quality-of-life (HF stack commonly uses this; avoids random install issues)
+safetensors>=0.4.3
+
+# ---------- B2: PEFT / LoRA ----------
+peft>=0.12.0
+
+# ---------- B3: Serving (FastAPI) ----------
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.6.0
+
+# ---------- B3: ONNX export + runtime ----------
+optimum[onnxruntime]>=1.19.0
+onnxruntime>=1.17.0
+onnx>=1.15.0
+
+# ---------- B4: Orchestration (LangGraph) ----------
+langgraph>=0.2.0
+langchain-core>=0.3.0
+
+# OpenAI:
+langchain-openai>=0.2.0
+openai>=1.40.0
+
+# Retry helper (useful for flaky LLM calls)
+tenacity>=8.3.0
